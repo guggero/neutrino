@@ -618,6 +618,17 @@ type Config struct {
 	//    not, replies with a getdata message.
 	// 3. Neutrino sends the raw transaction.
 	BroadcastTimeout time.Duration
+
+	// HttpChainSource is a comma separated list of HTTP URIs that can be
+	// used to fetch block headers, cfilter headers, cfilters and blocks. It
+	// can also be used to publish transactions.
+	HttpChainSource string
+
+	UseHttpForHeaders bool
+
+	UseHttpForBlocks bool
+
+	UseHttpForTxPublish bool
 }
 
 // peerSubscription holds a peer subscription which we'll notify about any
@@ -797,6 +808,37 @@ func NewChainService(cfg Config) (*ChainService, error) {
 	)
 	if err != nil {
 		return nil, err
+	}
+
+	if cfg.HttpChainSource != "" && cfg.UseHttpForHeaders {
+		log.Infof("Side loading block and filter headers from %s",
+			cfg.HttpChainSource)
+		startTime := time.Now()
+		err := sideLoadHeaders(
+			cfg.HttpChainSource, &cfg.ChainParams, s.BlockHeaders,
+			s.RegFilterHeaders,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		duration := time.Since(startTime)
+		log.Infof("Side loaded headers in %v, now validating side "+
+			"loaded headers", duration)
+		startTime = time.Now()
+
+		chainCtx := newLightChainCtx(cfg.ChainParams)
+
+		err = validateSideLoadedHeaders(
+			chainCtx, s.timeSource, s.BlockHeaders,
+			s.RegFilterHeaders,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		duration = time.Since(startTime)
+		log.Infof("Validated side loaded headers in %v", duration)
 	}
 
 	bm, err := newBlockManager(&blockManagerCfg{
