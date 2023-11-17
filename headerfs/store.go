@@ -836,8 +836,8 @@ func (f *FilterHeader) toIndexEntry() headerEntry {
 
 // WriteHeaders writes a batch of filter headers to persistent storage. The
 // headers themselves are appended to the flat file, and then the index updated
-// to reflect the new entires.
-func (f *FilterHeaderStore) WriteHeaders(hdrs ...FilterHeader) error {
+// to reflect the new entries.
+func (f *FilterHeaderStore) WriteHeaders(headers ...FilterHeader) error {
 	// Lock store for write.
 	f.mtx.Lock()
 	defer f.mtx.Unlock()
@@ -845,7 +845,7 @@ func (f *FilterHeaderStore) WriteHeaders(hdrs ...FilterHeader) error {
 	// If there are 0 headers to be written, return immediately. This
 	// prevents the newTip assignment from panicking because of an index
 	// of -1.
-	if len(hdrs) == 0 {
+	if len(headers) == 0 {
 		return nil
 	}
 
@@ -858,7 +858,7 @@ func (f *FilterHeaderStore) WriteHeaders(hdrs ...FilterHeader) error {
 
 	// Next, we'll write out all the passed headers in series into the
 	// buffer we just extracted from the pool.
-	for _, header := range hdrs {
+	for _, header := range headers {
 		if _, err := headerBuf.Write(header.FilterHash[:]); err != nil {
 			return err
 		}
@@ -872,7 +872,24 @@ func (f *FilterHeaderStore) WriteHeaders(hdrs ...FilterHeader) error {
 
 	// As the block headers should already be written, we only need to
 	// update the tip pointer for this particular header type.
-	newTip := hdrs[len(hdrs)-1].toIndexEntry().hash
+	newTip := headers[len(headers)-1].toIndexEntry().hash
+	return f.truncateIndex(&newTip, false)
+}
+
+// WriteRaw writes a batch of raw filter headers to persistent storage. The
+// headers themselves are appended to the flat file, and then the index updated
+// to reflect the new chain tip.
+func (f *FilterHeaderStore) WriteRaw(batchBytes []byte,
+	newTip chainhash.Hash) error {
+
+	// Lock store for write.
+	f.mtx.Lock()
+	defer f.mtx.Unlock()
+
+	if err := f.appendRaw(batchBytes); err != nil {
+		return err
+	}
+
 	return f.truncateIndex(&newTip, false)
 }
 
@@ -896,12 +913,14 @@ func (f *FilterHeaderStore) ChainTip() (*chainhash.Hash, uint32, error) {
 	return latestHeader, tipHeight, nil
 }
 
-// RollbackLastBlock rollsback both the index, and on-disk header file by a
+// RollbackLastBlock rolls back both the index, and on-disk header file by a
 // _single_ filter header. This method is meant to be used in the case of
 // re-org which disconnects the latest filter header from the end of the main
 // chain. The information about the latest header tip after truncation is
 // returned.
-func (f *FilterHeaderStore) RollbackLastBlock(newTip *chainhash.Hash) (*BlockStamp, error) {
+func (f *FilterHeaderStore) RollbackLastBlock(
+	newTip *chainhash.Hash) (*BlockStamp, error) {
+
 	// Lock store for write.
 	f.mtx.Lock()
 	defer f.mtx.Unlock()

@@ -1,6 +1,7 @@
 package headerfs
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"math/rand"
 	"os"
@@ -213,13 +214,23 @@ func TestFilterHeaderStoreOperations(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// With all the headers inserted, we'll now insert them into the
-	// database in a single batch.
-	require.NoError(t, fhs.WriteHeaders(blockHeaders...))
+	// With all the headers inserted, we'll now insert half of them using
+	// the regular insert.
+	require.NoError(t, fhs.WriteHeaders(blockHeaders[:numHeaders/2]...))
+
+	// We also want to test the raw insertion, for which we serialize the
+	// second half of the headers and then insert them directly into the
+	// file as a raw byte blob.
+	var buf bytes.Buffer
+	for _, header := range blockHeaders[numHeaders/2:] {
+		_, err := buf.Write(header.FilterHash[:])
+		require.NoError(t, err)
+	}
+	lastHeader := blockHeaders[len(blockHeaders)-1]
+	require.NoError(t, fhs.WriteRaw(buf.Bytes(), lastHeader.HeaderHash))
 
 	// At this point, the _tip_ of the chain from the PoV of the database
 	// should be the very last header we inserted.
-	lastHeader := blockHeaders[len(blockHeaders)-1]
 	tipHeader, tipHeight, err := fhs.ChainTip()
 	require.NoError(t, err)
 	require.Equal(t, lastHeader.FilterHash, *tipHeader)
