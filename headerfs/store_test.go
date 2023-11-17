@@ -17,7 +17,7 @@ import (
 )
 
 func createTestBlockHeaderStore(
-	t *testing.T) (walletdb.DB, string, *blockHeaderStore) {
+	t testing.TB) (walletdb.DB, string, *blockHeaderStore) {
 
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
@@ -113,6 +113,30 @@ func TestBlockHeaderStoreOperations(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, secondToLastHeader.BlockHeader, tipHeader)
 	require.Equal(t, secondToLastHeader.Height, tipHeight)
+}
+
+// BenchmarkBlockHeaderStoreRead benchmarks the performance of reading headers
+// from the database.
+func BenchmarkBlockHeaderStoreRead(b *testing.B) {
+	_, _, bhs := createTestBlockHeaderStore(b)
+
+	// With our test instance created, we'll now generate a series of
+	// "fake" block headers to insert into the database.
+	const numHeaders = 100
+	blockHeaders := createTestBlockHeaderChain(numHeaders)
+
+	// With all the headers inserted, we'll now insert them into the
+	// database in a single batch.
+	require.NoError(b, bhs.WriteHeaders(blockHeaders...))
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		for j := 1; j <= numHeaders; j++ {
+			_, err := bhs.FetchHeaderByHeight(uint32(j))
+			require.NoError(b, err)
+		}
+	}
 }
 
 func TestBlockHeaderStoreRecovery(t *testing.T) {

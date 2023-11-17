@@ -2,7 +2,7 @@ package headerfs
 
 import (
 	"bytes"
-	"fmt"
+	"io"
 	"os"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -24,36 +24,58 @@ func (h *headerStore) appendRaw(header []byte) error {
 	return nil
 }
 
-// readRaw reads a raw header from disk from a particular seek distance. The
-// amount of bytes read past the seek distance is determined by the specified
-// header type.
-func (h *headerStore) readRaw(seekDist uint64) ([]byte, error) {
-	var headerSize uint32
+// readRawBlockHeader reads a raw block header from disk at a particular height
+// directly into the given block header.
+func (h *headerStore) readRawBlockHeader(target *wire.BlockHeader,
+	height uint32) error {
 
-	// Based on the defined header type, we'll determine the number of
-	// bytes that we need to read past the sync point.
-	switch h.indexType {
-	case Block:
-		headerSize = 80
-
-	case RegularFilter:
-		headerSize = 32
-
-	default:
-		return nil, fmt.Errorf("unknown index type: %v", h.indexType)
+	// First, we'll seek to the location of the header in the file.
+	seekDistance := int64(height) * wire.MaxBlockHeaderPayload
+	if _, err := h.file.Seek(seekDistance, 0); err != nil {
+		return &ErrHeaderNotFound{err}
 	}
 
-	// TODO(roasbeef): add buffer pool
+	// Next we get a buffer from our pool to read the header into. We can
+	// avoid allocating a new buffer for each header by reusing buffers
+	// from our pool.
+	buf := headerBufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer headerBufPool.Put(buf)
 
-	// With the number of bytes to read determined, we'll create a slice
-	// for that number of bytes, and read directly from the file into the
-	// buffer.
-	rawHeader := make([]byte, headerSize)
-	if _, err := h.file.ReadAt(rawHeader, int64(seekDist)); err != nil {
-		return nil, &ErrHeaderNotFound{err}
+	// Now we read the header's bytes into our buffer. We don't directly
+	// de-serialize the header into the target header because the
+	// implementation does multiple reads which would mean multiple
+	// individual disk accesses. Reading all 80 bytes in one go and then do
+	// the de-serialization in-memory is much faster.
+	n, err := buf.ReadFrom(
+		io.LimitReader(h.file, wire.MaxBlockHeaderPayload),
+	)
+	if err != nil || n != wire.MaxBlockHeaderPayload {
+		return &ErrHeaderNotFound{err}
 	}
 
-	return rawHeader, nil
+	// Finally, we de-serialize the header bytes into the target header.
+	if err := target.Deserialize(buf); err != nil {
+		return &ErrHeaderNotFound{err}
+	}
+
+	return nil
+}
+
+// readRawFilterHeader reads a raw filter header from disk at a particular
+// height directly into the given filter header.
+func (h *headerStore) readRawFilterHeader(target *chainhash.Hash,
+	height uint32) error {
+
+	seekDistance := int64(height) * chainhash.HashSize
+	if _, err := h.file.Seek(seekDistance, 0); err != nil {
+		return &ErrHeaderNotFound{err}
+	}
+	if _, err := io.ReadFull(h.file, target[:]); err != nil {
+		return &ErrHeaderNotFound{err}
+	}
+
+	return nil
 }
 
 // readHeaderRange will attempt to fetch a series of block headers within the
@@ -92,41 +114,19 @@ func (h *blockHeaderStore) readHeaderRange(startHeight uint32,
 }
 
 // readHeader reads a full block header from the flat-file. The header read is
-// determined by the hight value.
+// determined by the height value.
 func (h *blockHeaderStore) readHeader(height uint32) (wire.BlockHeader, error) {
-	var header wire.BlockHeader
-
-	// Each header is 80 bytes, so using this information, we'll seek a
-	// distance to cover that height based on the size of block headers.
-	seekDistance := uint64(height) * 80
-
-	// With the distance calculated, we'll raw a raw header start from that
-	// offset.
-	rawHeader, err := h.readRaw(seekDistance)
-	if err != nil {
-		return header, err
-	}
-	headerReader := bytes.NewReader(rawHeader)
-
-	// Finally, decode the raw bytes into a proper bitcoin header.
-	if err := header.Deserialize(headerReader); err != nil {
-		return header, err
-	}
-
-	return header, nil
+	var blockHeader wire.BlockHeader
+	err := h.readRawBlockHeader(&blockHeader, height)
+	return blockHeader, err
 }
 
 // readHeader reads a single filter header at the specified height from the
 // flat files on disk.
 func (f *FilterHeaderStore) readHeader(height uint32) (*chainhash.Hash, error) {
-	seekDistance := uint64(height) * 32
-
-	rawHeader, err := f.readRaw(seekDistance)
-	if err != nil {
-		return nil, err
-	}
-
-	return chainhash.NewHash(rawHeader)
+	var filterHeader chainhash.Hash
+	err := f.readRawFilterHeader(&filterHeader, height)
+	return &filterHeader, err
 }
 
 // readHeaderRange will attempt to fetch a series of filter headers within the

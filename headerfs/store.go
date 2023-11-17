@@ -46,6 +46,10 @@ type BlockHeaderStore interface {
 	// on a block height.
 	FetchHeaderByHeight(height uint32) (*wire.BlockHeader, error)
 
+	// FetchHeaderByHeightInto attempts to retrieve a target block header
+	// based on a block height, and writes it into the passed header
+	FetchHeaderByHeightInto(height uint32, header *wire.BlockHeader) error
+
 	// FetchHeaderAncestors fetches the numHeaders block headers that are
 	// the ancestors of the target stop hash. A total of numHeaders+1
 	// headers will be returned, as we'll walk back numHeaders distance to
@@ -237,7 +241,9 @@ func NewBlockHeaderStore(filePath string, db walletdb.DB,
 // block height.
 //
 // NOTE: Part of the BlockHeaderStore interface.
-func (h *blockHeaderStore) FetchHeader(hash *chainhash.Hash) (*wire.BlockHeader, uint32, error) {
+func (h *blockHeaderStore) FetchHeader(hash *chainhash.Hash) (*wire.BlockHeader,
+	uint32, error) {
+
 	// Lock store for read.
 	h.mtx.RLock()
 	defer h.mtx.RUnlock()
@@ -262,7 +268,9 @@ func (h *blockHeaderStore) FetchHeader(hash *chainhash.Hash) (*wire.BlockHeader,
 // block height.
 //
 // NOTE: Part of the BlockHeaderStore interface.
-func (h *blockHeaderStore) FetchHeaderByHeight(height uint32) (*wire.BlockHeader, error) {
+func (h *blockHeaderStore) FetchHeaderByHeight(
+	height uint32) (*wire.BlockHeader, error) {
+
 	// Lock store for read.
 	h.mtx.RLock()
 	defer h.mtx.RUnlock()
@@ -276,6 +284,23 @@ func (h *blockHeaderStore) FetchHeaderByHeight(height uint32) (*wire.BlockHeader
 	}
 
 	return &header, nil
+}
+
+// FetchHeaderByHeightInto attempts to retrieve a target block header based on a
+// block height, and writes it into the passed header
+//
+// NOTE: Part of the BlockHeaderStore interface.
+func (h *blockHeaderStore) FetchHeaderByHeightInto(height uint32,
+	header *wire.BlockHeader) error {
+
+	// Lock store for read.
+	h.mtx.RLock()
+	defer h.mtx.RUnlock()
+
+	// For this query, we don't need to consult the index, and can instead
+	// just seek into the flat file based on the target height and return
+	// the full header.
+	return h.readRawBlockHeader(header, height)
 }
 
 // FetchHeaderAncestors fetches the numHeaders block headers that are the

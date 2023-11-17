@@ -52,6 +52,17 @@ func (m *mockBlockHeaderStore) FetchHeaderByHeight(height uint32) (
 	return nil, headerfs.ErrHeightNotFound
 }
 
+func (m *mockBlockHeaderStore) FetchHeaderByHeightInto(height uint32,
+	target *wire.BlockHeader) error {
+
+	if header, ok := m.heights[height]; ok {
+		*target = header
+		return nil
+	}
+
+	return headerfs.ErrHeightNotFound
+}
+
 func (m *mockBlockHeaderStore) FetchHeaderAncestors(uint32,
 	*chainhash.Hash) ([]wire.BlockHeader, uint32, error) {
 
