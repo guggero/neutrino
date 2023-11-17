@@ -203,18 +203,12 @@ type blockManager struct { // nolint:maligned
 	nextCheckpoint *chaincfg.Checkpoint
 	lastRequested  chainhash.Hash
 
-	minRetargetTimespan int64 // target timespan / adjustment factor
-	maxRetargetTimespan int64 // target timespan * adjustment factor
-	blocksPerRetarget   int32 // target timespan / target time per block
+	chainCtx *lightChainCtx
 }
 
 // newBlockManager returns a new bitcoin block manager.  Use Start to begin
 // processing asynchronous block and inv updates.
 func newBlockManager(cfg *blockManagerCfg) (*blockManager, error) {
-	targetTimespan := int64(cfg.ChainParams.TargetTimespan / time.Second)
-	targetTimePerBlock := int64(cfg.ChainParams.TargetTimePerBlock / time.Second)
-	adjustmentFactor := cfg.ChainParams.RetargetAdjustmentFactor
-
 	bm := blockManager{
 		cfg:           cfg,
 		peerChan:      make(chan interface{}, MaxPeers*3),
@@ -231,10 +225,8 @@ func newBlockManager(cfg *blockManagerCfg) (*blockManager, error) {
 		reorgList: headerlist.NewBoundedMemoryChain(
 			numMaxMemHeaders,
 		),
-		quit:                make(chan struct{}),
-		blocksPerRetarget:   int32(targetTimespan / targetTimePerBlock),
-		minRetargetTimespan: targetTimespan / adjustmentFactor,
-		maxRetargetTimespan: targetTimespan * adjustmentFactor,
+		quit:     make(chan struct{}),
+		chainCtx: newLightChainCtx(cfg.ChainParams),
 	}
 
 	// Next we'll create the two signals that goroutines will use to wait
@@ -2777,15 +2769,9 @@ func (b *blockManager) checkHeaderSanity(blockHeader *wire.BlockHeader,
 		prevNodeHeight, prevNodeHeader, b.cfg.BlockHeaders, hList,
 	)
 
-	// Create a lightChainCtx as well.
-	chainCtx := newLightChainCtx(
-		&b.cfg.ChainParams, b.blocksPerRetarget, b.minRetargetTimespan,
-		b.maxRetargetTimespan,
-	)
-
 	var emptyFlags blockchain.BehaviorFlags
 	err := blockchain.CheckBlockHeaderContext(
-		blockHeader, parentHeaderCtx, emptyFlags, chainCtx, true,
+		blockHeader, parentHeaderCtx, emptyFlags, b.chainCtx, true,
 	)
 	if err != nil {
 		return err
@@ -2881,14 +2867,16 @@ type lightChainCtx struct {
 
 // newLightChainCtx returns a new lightChainCtx instance from the passed
 // arguments.
-func newLightChainCtx(params *chaincfg.Params, blocksPerRetarget int32,
-	minRetargetTimespan, maxRetargetTimespan int64) *lightChainCtx {
+func newLightChainCtx(params chaincfg.Params) *lightChainCtx {
+	targetTimespan := int64(params.TargetTimespan / time.Second)
+	targetTimePerBlock := int64(params.TargetTimePerBlock / time.Second)
+	adjustmentFactor := params.RetargetAdjustmentFactor
 
 	return &lightChainCtx{
-		params:              params,
-		blocksPerRetarget:   blocksPerRetarget,
-		minRetargetTimespan: minRetargetTimespan,
-		maxRetargetTimespan: maxRetargetTimespan,
+		params:              &params,
+		blocksPerRetarget:   int32(targetTimespan / targetTimePerBlock),
+		minRetargetTimespan: targetTimespan / adjustmentFactor,
+		maxRetargetTimespan: targetTimespan * adjustmentFactor,
 	}
 }
 
