@@ -2996,6 +2996,7 @@ func (l *lightHeaderCtx) RelativeAncestorCtx(
 	ancestorHeight := l.height - distance
 
 	var (
+		iterNode *headerlist.Node
 		ancestor *wire.BlockHeader
 		err      error
 	)
@@ -3003,7 +3004,9 @@ func (l *lightHeaderCtx) RelativeAncestorCtx(
 	// We'll first consult the headerList to see if the ancestor can be
 	// found there. If that fails, we'll look up the header in the header
 	// store.
-	iterNode := l.headerList.Back()
+	if l.headerList != nil {
+		iterNode = l.headerList.Back()
+	}
 
 	// Keep looping until iterNode is nil or the ancestor height is
 	// encountered.
